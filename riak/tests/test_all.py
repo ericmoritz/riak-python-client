@@ -14,6 +14,7 @@ from riak import RiakPbcTransport, RiakPbcCachedTransport
 from riak import RiakHttpTransport, RiakHttpPoolTransport, RiakHttpReuseTransport
 from riak import RiakKeyFilter, key_filter
 from riak.mapreduce import RiakLink
+import riak
 
 HOST = os.environ.get('RIAK_TEST_HOST', 'localhost')
 HTTP_HOST = os.environ.get('RIAK_TEST_HTTP_HOST', HOST)
@@ -21,6 +22,7 @@ PB_HOST = os.environ.get('RIAK_TEST_PB_HOST', HOST)
 HTTP_PORT = int(os.environ.get('RIAK_TEST_HTTP_PORT', '8098'))
 PB_PORT = int(os.environ.get('RIAK_TEST_PB_PORT', '8087'))
 SKIP_SEARCH = int(os.environ.get('SKIP_SEARCH', '0'))
+SKIP_INDEX = int(os.environ.get('SKIP_INDEX', '0'))
 
 class NotJsonSerializable(object):
 
@@ -445,6 +447,46 @@ class BaseTestCase(object):
         results = self.client.search("searchbucket", "(foo:one OR foo:two OR foo:three OR foo:four) AND (NOT bar:green)").run()
         self.assertEqual(len(results), 3)
 
+    def test_index_integration(self):
+        if SKIP_INDEX:
+            return True
+        # Create some objects to search across...
+        bucket = self.client.bucket("searchbucket")
+        fixture = (
+            ('one', {'mod_two': 1 % 2, 'parity': 'odd'}),
+            ('two', {'mod_two': 2 % 2, 'parity': 'even'}),
+            ('three', {'mod_two': 3 % 2, 'parity': 'odd'}),
+            ('four', {'mod_two': 4 % 2, 'parity': 'even'}),
+            )
+
+        for key, data in fixture:
+            obj = bucket.get(key)
+            # Make sure we are working with a new object
+            obj.delete(rw=riak.ALL)
+
+            obj.set_data(data)
+            obj.add_index("mod_two", data['mod_two'])
+            obj.add_index("parity", data['parity'])
+
+            obj.store()
+            
+        result = sorted(bucket.query(mod_two__eq=0))
+        self.assertEqual(result, ["four", "two"])
+
+        # Test Remove index
+        for key, data in fixture:
+            obj = bucket.get(key)
+
+            obj.set_data(data)
+            obj.remove_index("mod_two")
+            obj.remove_index("parity")
+
+            obj.store()
+
+        result = bucket.query(mod_two__eq=0)
+        self.assertEqual(result, [])
+
+
     def test_store_binary_object_from_file(self):
         bucket = self.client.bucket('bucket')
         rand = str(self.randint())
@@ -742,6 +784,22 @@ class RiakHttpTransportTestCase(BaseTestCase, MapReduceAliasTestMixIn, unittest.
         o.store()
         stored_object = bucket.get("lots_of_links")
         self.assertEqual(len(stored_object.get_links()), 400)
+
+    def test_parse_indexes(self):
+        indexes = []
+        index_headers = [
+            ["x-riak-index-str_bin", "a string"],
+            ["x-riak-index-under_scored_bin", "something"],
+            ["x-riak-index-a_number_int", "10"],
+        ]
+
+        for header, value in index_headers:
+            self.client.get_transport().parse_indexes(indexes, header, value)
+
+        self.assertEqual(indexes,
+                         [("str", "bin", "a string"),
+                          ("under_scored", "bin", "something"),
+                          ("a_number", "int", 10), ])
 
 
 class RiakHttpPoolTransportTestCase(BaseTestCase, MapReduceAliasTestMixIn, unittest.TestCase):

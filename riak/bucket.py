@@ -18,6 +18,7 @@ specific language governing permissions and limitations
 under the License.
 """
 from riak_object import RiakObject
+from riak.indexes import get_index_name
 import mimetypes
 
 class RiakBucket(object):
@@ -410,6 +411,29 @@ class RiakBucket(object):
            At current, this is a very expensive operation. Use with caution.
         """
         return self._client.get_transport().get_keys(self)
+
+    def query(self, **kwargs):
+        """
+        Query bucket using secondary indexes
+
+        Usage:
+
+        bucket.query(bin_index_name__eq="test")
+        bucket.query(int_index_name__lt=10)
+        bucket.query(int_index_name__range=(0,100))
+        """
+        assert len(kwargs) == 1, "One index at a time please"
+        query = []
+        for key, value in kwargs.items():
+            # extract the op portion of the kwarg
+            bits = key.split("__")
+            op = bits[-1]
+            name = "__".join(bits[:-1])
+            query.append((name, op, value))
+
+        name, op, value = query[0]
+        index_name = get_index_name(name, value)
+        return self._client.get_transport().query(self.get_name(), index_name, op, value)
 
     def new_binary_from_file(self, key, filename):
         """

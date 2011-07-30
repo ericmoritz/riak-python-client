@@ -236,6 +236,9 @@ class RiakPbcTransport(RiakTransport):
 
         return keys
 
+    def query(self, bucket, index_name, op, value):
+        raise NotImplementedError("Secondary Index Queries via Pbc are not supported by Riak yet")
+
     def get_buckets(self):
         """
         Serialize bucket listing request and deserialize response
@@ -585,3 +588,5 @@ class RiakPbcCachedTransport(RiakTransport):
         """see set_client_id notes, you can do wrong with this"""
         return self._make_call(lambda conn: conn.get_client_id())
     
+    def query(self, bucket, index_name, op, value):
+        raise NotImplementedError("Secondary Index Queries via Pbc are not supported by Riak yet")

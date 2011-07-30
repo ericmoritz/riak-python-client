@@ -20,6 +20,7 @@ under the License.
 import types, copy, re
 from metadata import *
 from riak import RiakError
+from riak.indexes import get_index_type
 
 class RiakObject(object):
     """
@@ -269,6 +270,29 @@ class RiakObject(object):
             return links
         else:
             return []
+
+
+    def add_index(self, name, value):
+        index_type = get_index_type(value)
+
+        self.remove_index(name)
+
+        index = (name, index_type, value)
+        self._metadata.setdefault(MD_INDEXES, []).append(index)
+        return self
+
+    def remove_index(self, name):
+        a = []
+        if MD_INDEXES in self._metadata:
+            for index in self._metadata[MD_INDEXES]:
+                if index[0] != name:
+                    a.append(index)
+            self._metadata[MD_INDEXES] = a
+
+        return self
+
+    def get_indexes(self):
+        return self._metadata.get(MD_INDEXES, [])
 
     def store(self, w=None, dw=None, return_body=True):
         """

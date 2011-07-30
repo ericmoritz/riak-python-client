@@ -37,7 +37,8 @@ from riak.mapreduce import RiakLink
 from riak import RiakError
 from riak.multidict import MultiDict
 
-MAX_LINK_HEADER_SIZE = 8192 - 8 # substract length of "Link: " header string and newline
+MAX_HEADER_SIZE = 8192
+MAX_LINK_HEADER_SIZE = MAX_HEADER_SIZE - 8 # substract length of "Link: " header string and newline
 
 class RiakHttpTransport(RiakTransport) :
     """
@@ -115,6 +116,7 @@ class RiakHttpTransport(RiakTransport) :
 
         # Create the header from metadata
         links = self.add_links_for_riak_object(robj, headers)
+        indexes = self.add_indexes_for_riak_object(robj, headers)
 
         for key, value in robj.get_usermeta().iteritems():
             headers['X-Riak-Meta-%s' % key] = value
@@ -155,6 +157,29 @@ class RiakHttpTransport(RiakTransport) :
             return props['keys']
         else:
             raise Exception('Error getting bucket properties.')
+
+    def query(self, bucket, index_name, op, value):
+        host, port = self._host, self._port
+
+        # Join list/tuple values for range queries
+        if type(value) in (list, tuple):
+            value = "/".join(map(urllib.quote_plus, map(str, value)))
+        else:
+            value = str(value)
+
+        url = "/buckets/%s/index/%s/%s/%s" % (urllib.quote_plus(bucket),
+                                              urllib.quote_plus(index_name),
+                                              urllib.quote_plus(op),
+                                              urllib.quote_plus(value))
+
+        response = self.http_request("GET", host, port, url)
+
+        headers, encoded_props = response[0:2]
+        if headers['http_code'] == 200:
+            props = json.loads(encoded_props)
+            return props['keys']
+        else:
+            raise Exception('Error querying bucket')
 
     def get_buckets(self):
         params = {'buckets': 'true'}
@@ -271,6 +296,7 @@ class RiakHttpTransport(RiakTransport) :
         vclock = None
         metadata = {MD_USERMETA: {}}
         links = []
+        indexes = []
         for header, value in headers.iteritems():
             if header == 'content-type':
                 metadata[MD_CTYPE] = value
@@ -286,11 +312,18 @@ class RiakHttpTransport(RiakTransport) :
                 metadata[MD_LASTMOD] = value
             elif header.startswith('x-riak-meta-'):
                 metadata[MD_USERMETA][header.replace('x-riak-meta-', '')] = value
+            elif header.startswith('x-riak-index-'):
+                self.parse_indexes(indexes, header, headers[header])
             elif header == 'x-riak-vclock':
                 vclock = value
         if links:
             metadata[MD_LINKS] = links
 
+        if indexes:
+            metadata[MD_INDEXES] = indexes
+        else:
+            metadata[MD_INDEXES] = []
+            
         return vclock, [(metadata, data)]
 
     def to_link_header(self, link):
@@ -318,6 +351,24 @@ class RiakHttpTransport(RiakTransport) :
                 links.append(link)
         return self
 
+    def to_index_header(self, index):
+        name = "x-riak-index-%s_%s" % (index[0], index[1], )
+        return name, index[2]
+
+    def parse_indexes(self, indexes, header, value):
+        name_pat = re.compile("x-riak-index-(.+)_(.+?)$")
+        matches = name_pat.match(header)
+        if matches is not None:
+            index_name = matches.group(1)
+            index_type = matches.group(2)
+            if index_type == "int":
+                index = (index_name, index_type, int(value.strip()))
+            else:
+                index = (index_name, index_type, value.strip())
+
+            indexes.append(index)
+        return self
+
     def add_links_for_riak_object(self, robject, headers):
         links = robject.get_links()
         if links:
@@ -335,6 +386,14 @@ class RiakHttpTransport(RiakTransport) :
 
         return headers
 
+
+    def add_indexes_for_riak_object(self, robject, headers):
+        indexes = robject.get_indexes()
+        for index in indexes:
+            name, value = self.to_index_header(index)
+            headers.add(name, str(value))
+
+        return headers
 
 
     #Utility functions used by Riak library.
